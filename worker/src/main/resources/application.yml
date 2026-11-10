@@ -1,0 +1,37 @@
+spring:
+  application:
+    name: pedidos-worker
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    consumer:
+      group-id: pedidos-worker
+      auto-offset-reset: earliest
+      enable-auto-commit: false
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      max-poll-records: 1
+      properties:
+        max.poll.interval.ms: 1800000
+    listener:
+      ack-mode: manual_immediate
+  data:
+    mongodb:
+      uri: ${MONGODB_URI:mongodb://localhost:27017/pedidos}
+      auto-index-creation: true
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+
+pedidos:
+  topic: ${KAFKA_TOPIC:pedidos}
+  catalog-url: ${CATALOG_URL:http://localhost:8081}
+  max-retries: ${CATALOG_MAX_RETRIES:3}
+  retry-delay: ${CATALOG_RETRY_DELAY:500ms}
+  request-timeout: ${CATALOG_REQUEST_TIMEOUT:3s}
+  lock-ttl: ${ORDER_LOCK_TTL:2m}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
