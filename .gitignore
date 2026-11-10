@@ -1,0 +1,6 @@
+.env
+*.log
+target/
+coverage.out
+.idea/
+.vscode/
