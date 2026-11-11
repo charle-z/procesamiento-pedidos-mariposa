@@ -11,6 +11,7 @@ import org.springframework.cache.Cache;
 import org.springframework.cache.CacheManager;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.core.ParameterizedTypeReference;
+import org.springframework.core.codec.DecodingException;
 import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
@@ -23,9 +24,9 @@ import reactor.util.retry.Retry;
 
 @Component
 public class CatalogClient {
-  public record Customer(String id, String name, boolean active) {}
+  public record Customer(String id, String name, Boolean active) {}
 
-  public record Product(String id, String name, String description, long price) {}
+  public record Product(String id, String name, String description, Long price) {}
 
   private final WebClient client;
   private final OrderProperties properties;
@@ -47,13 +48,17 @@ public class CatalogClient {
 
   public Customer customer(String id) {
     Customer customer = get("/customers/{id}", id, Customer.class);
+    if (!id.equals(customer.id()) || customer.active() == null) throw invalidResponse("cliente");
     if (!customer.active()) throw new InvalidOrderException("Cliente inactivo: " + id);
     return customer;
   }
 
   @Cacheable("products")
   public Product product(String id) {
-    return get("/products/{id}", id, Product.class);
+    Product product = get("/products/{id}", id, Product.class);
+    if (!id.equals(product.id()) || product.name() == null || product.price() == null)
+      throw invalidResponse("producto");
+    return product;
   }
 
   public List<Product> products(List<String> ids) {
@@ -75,20 +80,31 @@ public class CatalogClient {
               client.post().uri("/products/batch").bodyValue(new BatchRequest(chunk)),
               new ParameterizedTypeReference<List<Product>>() {},
               "productos");
+      if (products.size() != chunk.size()) throw invalidResponse("productos");
+      Set<String> returned = new java.util.HashSet<>();
       for (Product product : products) {
-        if (product == null || product.id() == null || !requested.contains(product.id())) {
-          throw new IllegalStateException("Respuesta inválida del catálogo");
+        if (product == null
+            || product.id() == null
+            || product.name() == null
+            || product.price() == null
+            || !requested.contains(product.id())
+            || !returned.add(product.id())) {
+          throw invalidResponse("productos");
         }
         found.put(product.id(), product);
       }
-      if (!found.keySet().containsAll(chunk))
-        throw new IllegalStateException("Respuesta incompleta del catálogo");
+      if (!found.keySet().containsAll(chunk)) throw invalidResponse("productos");
       for (String id : chunk) cache.put(id, found.get(id));
     }
     return ids.stream().map(found::get).toList();
   }
 
   private record BatchRequest(List<String> productIds) {}
+
+  private CatalogUnavailableException invalidResponse(String description) {
+    return new CatalogUnavailableException(
+        "Respuesta inválida del catálogo: " + description, 1, null);
+  }
 
   private <T> T get(String path, String id, Class<T> type) {
     return send(client.get().uri(path, id), ParameterizedTypeReference.forType(type), id);
@@ -109,9 +125,22 @@ public class CatalogClient {
                         Mono.error(
                             new InvalidOrderException(
                                 "No se encontró o no es válido: " + description))))
+        .onStatus(
+            status -> status.is4xxClientError() && status.value() != 408 && status.value() != 429,
+            response ->
+                response
+                    .releaseBody()
+                    .then(
+                        Mono.error(
+                            new CatalogUnavailableException(
+                                "El catálogo rechazó la consulta", 1, null))))
         .bodyToMono(type)
-        .switchIfEmpty(
-            Mono.error(new IllegalStateException("Respuesta vacía para: " + description)))
+        .onErrorMap(
+            DecodingException.class,
+            error ->
+                new CatalogUnavailableException(
+                    "Respuesta inválida del catálogo: " + description, 1, error))
+        .switchIfEmpty(Mono.error(invalidResponse(description)))
         .timeout(properties.requestTimeout())
         .retryWhen(
             Retry.backoff(properties.maxRetries(), properties.retryDelay())
@@ -130,6 +159,7 @@ public class CatalogClient {
         || error instanceof TimeoutException
         || (error instanceof WebClientResponseException response
             && (response.getStatusCode().is5xxServerError()
+                || response.getStatusCode().value() == 408
                 || response.getStatusCode().value() == 429));
   }
 }

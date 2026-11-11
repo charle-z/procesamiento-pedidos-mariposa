@@ -120,6 +120,151 @@ class CatalogClientTest {
     assertEquals(3, requests.get());
   }
 
+  @Test
+  void authorizationErrorsAreRecordedWithoutRetries() {
+    AtomicInteger requests = new AtomicInteger();
+    server =
+        HttpServer.create()
+            .host("127.0.0.1")
+            .port(0)
+            .route(
+                routes ->
+                    routes.get(
+                        "/customers/{id}",
+                        (request, response) -> {
+                          requests.incrementAndGet();
+                          return response.status(403).send();
+                        }))
+            .bindNow();
+    var error = assertThrows(CatalogUnavailableException.class, () -> client(2).customer("c1"));
+    assertEquals(1, error.attempts());
+    assertEquals(1, requests.get());
+  }
+
+  @Test
+  void incompleteBatchIsRecordedAsCatalogFailure() {
+    server =
+        HttpServer.create()
+            .host("127.0.0.1")
+            .port(0)
+            .route(
+                routes ->
+                    routes.post(
+                        "/products/batch",
+                        (request, response) ->
+                            response
+                                .header("Content-Type", "application/json")
+                                .sendString(Mono.just("[]"))))
+            .bindNow();
+    var error =
+        assertThrows(CatalogUnavailableException.class, () -> client(2).products(List.of("p1")));
+    assertEquals(1, error.attempts());
+  }
+
+  @Test
+  void missingCustomerStatusIsRecordedAsCatalogFailure() {
+    server =
+        HttpServer.create()
+            .host("127.0.0.1")
+            .port(0)
+            .route(
+                routes ->
+                    routes.get(
+                        "/customers/{id}",
+                        (request, response) ->
+                            response
+                                .header("Content-Type", "application/json")
+                                .sendString(Mono.just("{\"id\":\"c1\",\"name\":\"Cliente\"}"))))
+            .bindNow();
+    assertThrows(CatalogUnavailableException.class, () -> client(2).customer("c1"));
+  }
+
+  @Test
+  void malformedJsonIsRecordedAsCatalogFailure() {
+    server =
+        HttpServer.create()
+            .host("127.0.0.1")
+            .port(0)
+            .route(
+                routes ->
+                    routes.get(
+                        "/customers/{id}",
+                        (request, response) ->
+                            response
+                                .header("Content-Type", "application/json")
+                                .sendString(Mono.just("{"))))
+            .bindNow();
+    assertThrows(CatalogUnavailableException.class, () -> client(2).customer("c1"));
+  }
+
+  @Test
+  void batchRejectsMissingPriceWithoutCachingTheProduct() {
+    AtomicInteger requests = new AtomicInteger();
+    server =
+        HttpServer.create()
+            .host("127.0.0.1")
+            .port(0)
+            .route(
+                routes ->
+                    routes.post(
+                        "/products/batch",
+                        (request, response) -> {
+                          requests.incrementAndGet();
+                          return response
+                              .header("Content-Type", "application/json")
+                              .sendString(Mono.just("[{\"id\":\"p1\",\"name\":\"Laptop\"}]"));
+                        }))
+            .bindNow();
+    CatalogClient client = client(2);
+    var first =
+        assertThrows(CatalogUnavailableException.class, () -> client.products(List.of("p1")));
+    var second =
+        assertThrows(CatalogUnavailableException.class, () -> client.products(List.of("p1")));
+    assertEquals(1, first.attempts());
+    assertEquals(1, second.attempts());
+    assertEquals(2, requests.get());
+  }
+
+  @Test
+  void batchRejectsNullPrice() {
+    server =
+        HttpServer.create()
+            .host("127.0.0.1")
+            .port(0)
+            .route(
+                routes ->
+                    routes.post(
+                        "/products/batch",
+                        (request, response) ->
+                            response
+                                .header("Content-Type", "application/json")
+                                .sendString(
+                                    Mono.just(
+                                        "[{\"id\":\"p1\",\"name\":\"Laptop\",\"price\":null}]"))))
+            .bindNow();
+    assertThrows(CatalogUnavailableException.class, () -> client(2).products(List.of("p1")));
+  }
+
+  @Test
+  void batchAcceptsZeroPrice() {
+    server =
+        HttpServer.create()
+            .host("127.0.0.1")
+            .port(0)
+            .route(
+                routes ->
+                    routes.post(
+                        "/products/batch",
+                        (request, response) ->
+                            response
+                                .header("Content-Type", "application/json")
+                                .sendString(
+                                    Mono.just(
+                                        "[{\"id\":\"p1\",\"name\":\"Laptop\",\"price\":0}]"))))
+            .bindNow();
+    assertEquals(0L, client(2).products(List.of("p1")).getFirst().price());
+  }
+
   private CatalogClient client(int retries) {
     var properties =
         new OrderProperties(
@@ -127,7 +272,7 @@ class CatalogClientTest {
             "http://127.0.0.1:" + server.port(),
             retries,
             Duration.ofMillis(10),
-            Duration.ofSeconds(2),
+            Duration.ofSeconds(10),
             Duration.ofMinutes(1));
     return new CatalogClient(
         WebClient.builder(), properties, new ConcurrentMapCacheManager("products"), connections);

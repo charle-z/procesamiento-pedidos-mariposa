@@ -3,6 +3,7 @@ package com.pedidos.worker;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.time.Duration;
 import java.util.ArrayList;
@@ -26,7 +27,9 @@ class OrderLockIntegrationTest {
 
   @BeforeEach
   void connect() {
-    connection = new LettuceConnectionFactory("127.0.0.1", 6381);
+    String host = System.getenv().getOrDefault("REDIS_TEST_HOST", "127.0.0.1");
+    int port = Integer.parseInt(System.getenv().getOrDefault("REDIS_TEST_PORT", "6381"));
+    connection = new LettuceConnectionFactory(host, port);
     connection.afterPropertiesSet();
     var redis = new StringRedisTemplate(connection);
     redis.afterPropertiesSet();
@@ -43,6 +46,7 @@ class OrderLockIntegrationTest {
 
   @AfterEach
   void close() {
+    lock.shutdown();
     connection.destroy();
   }
 
@@ -80,6 +84,35 @@ class OrderLockIntegrationTest {
     Thread.sleep(3300);
     String newToken = lock.acquire(orderId);
     assertNotNull(newToken);
+    lock.release(orderId, oldToken);
+    assertNull(lock.acquire(orderId));
+    lock.release(orderId, newToken);
+  }
+
+  @Test
+  void activeLeaseKeepsLockPastOriginalTtl() throws Exception {
+    String token = lock.acquire(orderId);
+    assertNotNull(token);
+    try (var lease = lock.maintain(orderId, token)) {
+      Thread.sleep(4200);
+      lease.requireOwnership();
+      assertNull(lock.acquire(orderId));
+    }
+    lock.release(orderId, token);
+    assertNotNull(lock.acquire(orderId));
+  }
+
+  @Test
+  void leaseDetectsLostOwnershipAndDoesNotReleaseSuccessor() {
+    String oldToken = lock.acquire(orderId);
+    assertNotNull(oldToken);
+    String newToken;
+    try (var lease = lock.maintain(orderId, oldToken)) {
+      lock.release(orderId, oldToken);
+      newToken = lock.acquire(orderId);
+      assertNotNull(newToken);
+      assertThrows(IllegalStateException.class, lease::requireOwnership);
+    }
     lock.release(orderId, oldToken);
     assertNull(lock.acquire(orderId));
     lock.release(orderId, newToken);

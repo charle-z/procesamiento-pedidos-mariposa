@@ -23,21 +23,49 @@ public class OrderProcessor {
     if (token == null)
       throw new IllegalStateException("Pedido en procesamiento: " + order.orderId());
     try {
-      if (repository.existsByOrderId(order.orderId())) return false;
-      catalog.customer(order.customerId());
-      List<OrderDocument.Product> products = new ArrayList<>();
-      for (CatalogClient.Product product : catalog.products(order.products())) {
-        products.add(new OrderDocument.Product(product.id(), product.name(), product.price()));
-      }
-      try {
-        repository.insert(new OrderDocument(null, order.orderId(), order.customerId(), products));
-        return true;
-      } catch (DuplicateKeyException alreadyProcessed) {
-        if (!repository.existsByOrderId(order.orderId())) throw alreadyProcessed;
-        return false;
+      try (var lease = lock.maintain(order.orderId(), token)) {
+        try {
+          return processLocked(order, lease);
+        } catch (InvalidOrderException | CatalogUnavailableException failure) {
+          lease.requireOwnership();
+          throw failure;
+        }
       }
     } finally {
       lock.release(order.orderId(), token);
+    }
+  }
+
+  private boolean processLocked(OrderMessage order, OrderLock.Lease lease) {
+    var previous = repository.findByOrderId(order.orderId());
+    if (previous.isPresent()) {
+      verifyDuplicate(order, previous.get());
+      lease.requireOwnership();
+      return false;
+    }
+    catalog.customer(order.customerId());
+    List<OrderDocument.Product> products = new ArrayList<>();
+    for (CatalogClient.Product product : catalog.products(order.products())) {
+      products.add(new OrderDocument.Product(product.id(), product.name(), product.price()));
+    }
+    try {
+      lease.requireOwnership();
+      repository.insert(new OrderDocument(null, order.orderId(), order.customerId(), products));
+      return true;
+    } catch (DuplicateKeyException alreadyProcessed) {
+      var existing = repository.findByOrderId(order.orderId());
+      if (existing.isEmpty()) throw alreadyProcessed;
+      verifyDuplicate(order, existing.get());
+      lease.requireOwnership();
+      return false;
+    }
+  }
+
+  private void verifyDuplicate(OrderMessage order, OrderDocument existing) {
+    List<String> productIds =
+        existing.products().stream().map(OrderDocument.Product::productId).toList();
+    if (!existing.customerId().equals(order.customerId()) || !productIds.equals(order.products())) {
+      throw new InvalidOrderException("El identificador del pedido ya existe con otros datos");
     }
   }
 }
