@@ -1,7 +1,5 @@
 package com.pedidos.worker;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
@@ -10,6 +8,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.kafka.support.Acknowledgment;
 import org.springframework.stereotype.Component;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.ObjectMapper;
 
 @Component
 public class OrderListener {
@@ -49,7 +49,7 @@ public class OrderListener {
       boolean created = processor.process(order);
       result = created ? "processed" : "duplicate";
       log.info("Pedido {}: {}", result, order.orderId());
-    } catch (JsonProcessingException | InvalidOrderException invalid) {
+    } catch (JacksonException | InvalidOrderException invalid) {
       failures.save(record, invalid.getMessage(), 1);
       result = "invalid";
       log.warn("Pedido inválido en partición {} offset {}", record.partition(), record.offset());

@@ -5,11 +5,11 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.junit.jupiter.api.Test;
 import org.springframework.kafka.support.Acknowledgment;
+import tools.jackson.databind.json.JsonMapper;
 
 class OrderListenerTest {
   private final OrderProcessor processor = mock(OrderProcessor.class);
@@ -17,7 +17,7 @@ class OrderListenerTest {
   private final Acknowledgment acknowledgment = mock(Acknowledgment.class);
   private final SimpleMeterRegistry metrics = new SimpleMeterRegistry();
   private final OrderListener listener =
-      new OrderListener(new ObjectMapper(), processor, failures, metrics);
+      new OrderListener(JsonMapper.builder().build(), processor, failures, metrics);
 
   @Test
   void acknowledgesOnlyAfterProcessing() {
