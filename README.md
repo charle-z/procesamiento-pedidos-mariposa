@@ -23,6 +23,12 @@ docker compose exec mongo mongosh pedidos --eval 'db.orders.find().pretty()'
 docker compose exec redis redis-cli --scan --pattern 'order:failed:*'
 ```
 
+Para consultar un fallo, usa su clave:
+
+```sh
+docker compose exec redis redis-cli HGETALL <clave>
+```
+
 El catálogo contiene `customer-456` activo, `customer-789` inactivo, `product-789` y `product-456`.
 
 ## Pruebas
@@ -36,3 +42,5 @@ El worker usa un índice único por `orderId`, un bloqueo temporal por pedido y 
 
 Estado: `http://localhost:8080/actuator/health`  
 Métricas: `http://localhost:8080/actuator/prometheus`
+
+Para detener los servicios sin borrar datos: `docker compose stop`.
