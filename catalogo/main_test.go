@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -24,6 +25,34 @@ func TestCatalog(t *testing.T) {
 			handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, tc.path, nil))
 			if response.Code != tc.want {
 				t.Fatalf("status = %d, want %d", response.Code, tc.want)
+			}
+		})
+	}
+}
+
+func TestProductBatch(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+		want int
+	}{
+		{"all found", `{"productIds":["product-789","product-456"]}`, http.StatusOK},
+		{"missing", `{"productIds":["product-789","missing"]}`, http.StatusNotFound},
+		{"empty", `{"productIds":[]}`, http.StatusBadRequest},
+		{"invalid", `{"productIds":["product-789"]} {}`, http.StatusBadRequest},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodPost, "/products/batch", bytes.NewBufferString(tc.body))
+			newHandler().ServeHTTP(response, request)
+			if response.Code != tc.want {
+				t.Fatalf("status = %d, want %d", response.Code, tc.want)
+			}
+			if tc.want == http.StatusOK {
+				var got []product
+				if err := json.Unmarshal(response.Body.Bytes(), &got); err != nil || len(got) != 2 {
+					t.Fatalf("unexpected response: %s", response.Body.String())
+				}
 			}
 		})
 	}

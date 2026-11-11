@@ -1,6 +1,11 @@
 spring:
   application:
     name: pedidos-worker
+  cache:
+    type: caffeine
+    cache-names: products
+    caffeine:
+      spec: maximumSize=1000,expireAfterWrite=5m,recordStats
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
     consumer:
@@ -14,6 +19,7 @@ spring:
         max.poll.interval.ms: 1800000
     listener:
       ack-mode: manual_immediate
+      concurrency: ${KAFKA_CONCURRENCY:1}
   data:
     mongodb:
       uri: ${MONGODB_URI:mongodb://localhost:27017/pedidos}
@@ -21,6 +27,8 @@ spring:
     redis:
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}
+      repositories:
+        enabled: false
 
 pedidos:
   topic: ${KAFKA_TOPIC:pedidos}
@@ -31,6 +39,10 @@ pedidos:
   lock-ttl: ${ORDER_LOCK_TTL:2m}
 
 management:
+  metrics:
+    distribution:
+      percentiles:
+        orders.processing: 0.95
   endpoints:
     web:
       exposure:

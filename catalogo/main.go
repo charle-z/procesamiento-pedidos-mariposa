@@ -2,7 +2,9 @@ package main
 
 import (
 	"encoding/json"
+	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"time"
@@ -40,6 +42,31 @@ func newHandler() http.Handler {
 		}
 		writeJSON(w, item)
 	})
+	mux.HandleFunc("POST /products/batch", func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			ProductIDs []string `json:"productIds"`
+		}
+		decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64*1024))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&request); err != nil || len(request.ProductIDs) == 0 || len(request.ProductIDs) > 100 {
+			http.Error(w, "invalid product list", http.StatusBadRequest)
+			return
+		}
+		if err := decoder.Decode(&struct{}{}); err != io.EOF {
+			http.Error(w, "invalid request body", http.StatusBadRequest)
+			return
+		}
+		items := make([]product, 0, len(request.ProductIDs))
+		for _, id := range request.ProductIDs {
+			item, ok := products[id]
+			if !ok {
+				http.NotFound(w, r)
+				return
+			}
+			items = append(items, item)
+		}
+		writeJSON(w, items)
+	})
 	mux.HandleFunc("GET /customers/{id}", func(w http.ResponseWriter, r *http.Request) {
 		item, ok := customers[r.PathValue("id")]
 		if !ok {
@@ -67,7 +94,7 @@ func main() {
 		port = "8081"
 	}
 	server := &http.Server{
-		Addr:              ":" + port,
+		Addr:              net.JoinHostPort(os.Getenv("BIND_HOST"), port),
 		Handler:           newHandler(),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,

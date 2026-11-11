@@ -26,8 +26,8 @@ class OrderProcessorTest {
   void enrichesAndStoresOrder() {
     when(catalog.customer("customer-456"))
         .thenReturn(new CatalogClient.Customer("customer-456", "Cliente", true));
-    when(catalog.product("product-789"))
-        .thenReturn(new CatalogClient.Product("product-789", "Laptop", "", 999));
+    when(catalog.products(List.of("product-789")))
+        .thenReturn(List.of(new CatalogClient.Product("product-789", "Laptop", "", 999)));
     processor.process(order);
     verify(repository)
         .insert(
@@ -66,8 +66,8 @@ class OrderProcessorTest {
   @Test
   void uniqueOrderIndexProtectsAgainstConcurrentInsert() {
     when(repository.existsByOrderId("order-123")).thenReturn(false, true);
-    when(catalog.product("product-789"))
-        .thenReturn(new CatalogClient.Product("product-789", "Laptop", "", 999));
+    when(catalog.products(List.of("product-789")))
+        .thenReturn(List.of(new CatalogClient.Product("product-789", "Laptop", "", 999)));
     doThrow(new DuplicateKeyException("duplicate"))
         .when(repository)
         .insert(any(OrderDocument.class));

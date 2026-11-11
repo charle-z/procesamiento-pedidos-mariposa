@@ -1,5 +1,6 @@
 package com.pedidos.worker;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
@@ -14,8 +15,9 @@ class OrderListenerTest {
   private final OrderProcessor processor = mock(OrderProcessor.class);
   private final FailedMessageStore failures = mock(FailedMessageStore.class);
   private final Acknowledgment acknowledgment = mock(Acknowledgment.class);
+  private final SimpleMeterRegistry metrics = new SimpleMeterRegistry();
   private final OrderListener listener =
-      new OrderListener(new ObjectMapper(), processor, failures, new SimpleMeterRegistry());
+      new OrderListener(new ObjectMapper(), processor, failures, metrics);
 
   @Test
   void acknowledgesOnlyAfterProcessing() {
@@ -26,10 +28,27 @@ class OrderListenerTest {
             1L,
             null,
             "{\"orderId\":\"o1\",\"customerId\":\"c1\",\"products\":[\"p1\"]}");
+    when(processor.process(any(OrderMessage.class))).thenReturn(true);
     listener.receive(record, acknowledgment);
     verify(processor).process(any(OrderMessage.class));
     verify(acknowledgment).acknowledge();
     verifyNoInteractions(failures);
+    assertEquals(1.0, metrics.counter("orders.handled", "result", "processed").count());
+  }
+
+  @Test
+  void countsDuplicateSeparately() {
+    var record =
+        new ConsumerRecord<String, String>(
+            "pedidos",
+            0,
+            1L,
+            null,
+            "{\"orderId\":\"o1\",\"customerId\":\"c1\",\"products\":[\"p1\"]}");
+    when(processor.process(any(OrderMessage.class))).thenReturn(false);
+    listener.receive(record, acknowledgment);
+    verify(acknowledgment).acknowledge();
+    assertEquals(1.0, metrics.counter("orders.handled", "result", "duplicate").count());
   }
 
   @Test

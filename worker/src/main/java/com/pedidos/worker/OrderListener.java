@@ -3,6 +3,7 @@ package com.pedidos.worker;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -31,13 +32,23 @@ public class OrderListener {
 
   @KafkaListener(topics = "${pedidos.topic}")
   public void receive(ConsumerRecord<String, String> record, Acknowledgment acknowledgment) {
+    Timer.Sample sample = Timer.start(metrics);
+    try {
+      handle(record, acknowledgment);
+    } finally {
+      sample.stop(metrics.timer("orders.processing"));
+    }
+  }
+
+  private void handle(ConsumerRecord<String, String> record, Acknowledgment acknowledgment) {
     String result = "processed";
     try {
       if (record.value() == null) throw new InvalidOrderException("El mensaje no puede ser nulo");
       OrderMessage order = mapper.readValue(record.value(), OrderMessage.class);
       if (order == null) throw new InvalidOrderException("El pedido no puede ser nulo");
-      processor.process(order);
-      log.info("Pedido procesado: {}", order.orderId());
+      boolean created = processor.process(order);
+      result = created ? "processed" : "duplicate";
+      log.info("Pedido {}: {}", result, order.orderId());
     } catch (JsonProcessingException | InvalidOrderException invalid) {
       failures.save(record, invalid.getMessage(), 1);
       result = "invalid";

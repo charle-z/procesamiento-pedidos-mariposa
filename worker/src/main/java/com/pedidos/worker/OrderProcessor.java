@@ -17,23 +17,24 @@ public class OrderProcessor {
     this.catalog = catalog;
   }
 
-  public void process(OrderMessage order) {
+  public boolean process(OrderMessage order) {
     order.validate();
     String token = lock.acquire(order.orderId());
     if (token == null)
       throw new IllegalStateException("Pedido en procesamiento: " + order.orderId());
     try {
-      if (repository.existsByOrderId(order.orderId())) return;
+      if (repository.existsByOrderId(order.orderId())) return false;
       catalog.customer(order.customerId());
       List<OrderDocument.Product> products = new ArrayList<>();
-      for (String id : order.products()) {
-        CatalogClient.Product product = catalog.product(id);
+      for (CatalogClient.Product product : catalog.products(order.products())) {
         products.add(new OrderDocument.Product(product.id(), product.name(), product.price()));
       }
       try {
         repository.insert(new OrderDocument(null, order.orderId(), order.customerId(), products));
+        return true;
       } catch (DuplicateKeyException alreadyProcessed) {
         if (!repository.existsByOrderId(order.orderId())) throw alreadyProcessed;
+        return false;
       }
     } finally {
       lock.release(order.orderId(), token);
