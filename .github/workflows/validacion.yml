@@ -1,0 +1,31 @@
+name: Validación
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  pruebas:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache: false
+      - name: Probar catálogo
+        working-directory: catalogo
+        run: go test ./... && go vet ./...
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - name: Probar worker
+        working-directory: worker
+        run: mvn -B -ntp test
+      - name: Validar Docker Compose
+        run: docker compose config --quiet
