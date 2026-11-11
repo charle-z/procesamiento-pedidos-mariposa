@@ -2,7 +2,7 @@ FROM maven:3.9.11-eclipse-temurin-21@sha256:6fdc855a6ed81d288ca7ca37ac6ff5e9308b
 WORKDIR /src
 COPY pom.xml .
 COPY src ./src
-RUN mvn -B -ntp package -Dmaven.test.skip=true
+RUN --mount=type=cache,target=/root/.m2,sharing=locked mvn -B -ntp package -Dmaven.test.skip=true
 
 FROM gcr.io/distroless/java21-debian12:nonroot@sha256:7e37784d94dccbf5ccb195c73b295f5ad00cd266512dfbac12eb9c3c28f8077d
 WORKDIR /app
